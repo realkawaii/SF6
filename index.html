@@ -6,7 +6,7 @@
   <title>SF6 每日對戰紀錄</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-gray-900 text-gray-100 min-h-screen p-4 md:p-8 font-sans">
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4 md:p-8 font-sans pb-20">
 
   <div class="max-w-md mx-auto space-y-6">
     <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
@@ -43,6 +43,11 @@
           <select id="opp-char" class="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white focus:ring-2 focus:ring-orange-500 outline-none transition"></select>
         </div>
 
+        <div>
+          <label class="block text-sm font-medium text-gray-400 mb-1">備註 (選填)</label>
+          <input type="text" id="memo" placeholder="例如：對手愛凹昇龍、下段擇..." class="w-full bg-gray-700 border border-gray-600 rounded-lg p-3 text-white focus:ring-2 focus:ring-orange-500 outline-none transition">
+        </div>
+
         <div class="flex gap-4 pt-2">
           <button id="btn-win" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg shadow transition">
             記錄：勝利 (Win)
@@ -55,18 +60,58 @@
     </div>
 
     <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
-      <h2 class="text-lg font-bold mb-4 text-gray-300">歷史紀錄 (每日統計)</h2>
+      <h2 class="text-lg font-bold mb-4 text-gray-300">歷史統計 (每日)</h2>
       <div id="history-list" class="space-y-3">
         <p class="text-gray-500 text-sm text-center">載入中...</p>
+      </div>
+    </div>
+
+    <div class="bg-gray-800 p-6 rounded-xl shadow-lg border border-gray-700">
+      <h2 class="text-lg font-bold mb-4 text-gray-300">詳細對戰紀錄 (新至舊)</h2>
+      <div id="match-list" class="space-y-3">
+        <p class="text-gray-500 text-sm text-center">載入中...</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-modal" class="fixed inset-0 bg-black bg-opacity-70 hidden flex justify-center items-center px-4 z-50">
+    <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-600 w-full max-w-sm">
+      <h3 class="text-lg font-bold text-white mb-4">編輯對戰紀錄</h3>
+      <input type="hidden" id="edit-id">
+      
+      <div class="space-y-4 mb-6">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">我的角色</label>
+          <select id="edit-my-char" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"></select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">對手角色</label>
+          <select id="edit-opp-char" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white"></select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">勝負結果</label>
+          <select id="edit-result" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white">
+            <option value="win">勝利 (Win)</option>
+            <option value="loss">戰敗 (Loss)</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">備註</label>
+          <input type="text" id="edit-memo" class="w-full bg-gray-700 border border-gray-600 rounded p-2 text-white">
+        </div>
+      </div>
+      
+      <div class="flex gap-3">
+        <button onclick="closeEditModal()" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded transition">取消</button>
+        <button onclick="saveEdit()" class="flex-1 bg-orange-600 hover:bg-orange-500 text-white py-2 rounded transition">儲存修改</button>
       </div>
     </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
-    import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp, doc, deleteDoc, updateDoc } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js";
 
-    // Firebase 設定
     const firebaseConfig = {
       apiKey: "AIzaSyCK9wEgSfO68Wfw1t9VGJWMOGcbOFc3LLA",
       authDomain: "sf6wl-d52e0.firebaseapp.com",
@@ -81,7 +126,6 @@
     const db = getFirestore(app);
     const matchesCol = collection(db, "sf6_matches");
 
-    // 角色清單
     const rawCharacters = [
       "Ryu", "Luke", "Jamie", "Chun-Li", "Guile", "Kimberly", "Juri", "Ken", 
       "Blanka", "Dhalsim", "E.Honda", "Dee Jay", "Manon", "Marisa", "Jp", 
@@ -89,39 +133,52 @@
       "Terry", "Mai", "Elena", "Sagat", "C.Viper", "Alex"
     ];
     
-    // 字母排序
     const characters = rawCharacters.sort((a, b) => a.localeCompare(b));
 
     const myCharSelect = document.getElementById('my-char');
     const oppCharSelect = document.getElementById('opp-char');
+    const editMyCharSelect = document.getElementById('edit-my-char');
+    const editOppCharSelect = document.getElementById('edit-opp-char');
+    const memoInput = document.getElementById('memo');
 
-    // 取得當地日期的字串 (YYYY-MM-DD)
+    // 暫存目前的對戰紀錄，方便編輯時讀取
+    window.currentMatches = [];
+
     function getTodayString() {
       const now = new Date();
-      // 避免時區問題，手動組合 YYYY-MM-DD
       const yyyy = now.getFullYear();
       const mm = String(now.getMonth() + 1).padStart(2, '0');
       const dd = String(now.getDate()).padStart(2, '0');
       return `${yyyy}-${mm}-${dd}`;
     }
 
-    // 初始化下拉選單
+    function formatTime(timestamp) {
+      if (!timestamp) return "剛剛";
+      const date = timestamp.toDate();
+      const mm = String(date.getMonth() + 1).padStart(2, '0');
+      const dd = String(date.getDate()).padStart(2, '0');
+      const hh = String(date.getHours()).padStart(2, '0');
+      const min = String(date.getMinutes()).padStart(2, '0');
+      return `${mm}/${dd} ${hh}:${min}`;
+    }
+
     function initSelects() {
       characters.forEach(char => {
         myCharSelect.add(new Option(char, char));
         oppCharSelect.add(new Option(char, char));
+        editMyCharSelect.add(new Option(char, char));
+        editOppCharSelect.add(new Option(char, char));
       });
-      // 預設角色設定
+      // 保持之前的預設角色習慣
       myCharSelect.value = "Gouki";
     }
 
-    // 記錄對戰結果
     async function recordMatch(result) {
       const myChar = myCharSelect.value;
       const oppChar = oppCharSelect.value;
+      const memoText = memoInput.value.trim(); // 取得備註
       const today = getTodayString();
 
-      // 按鈕呈現載入狀態
       const btnWin = document.getElementById('btn-win');
       const btnLoss = document.getElementById('btn-loss');
       btnWin.disabled = true; btnLoss.disabled = true;
@@ -132,60 +189,64 @@
           myChar: myChar,
           oppChar: oppChar,
           result: result,
+          memo: memoText, // 寫入備註
           timestamp: serverTimestamp()
         });
-        // 記錄完成後重新載入統計資料
+        
+        memoInput.value = ''; // 成功後清空備註欄位，方便下一場
         await loadStats();
       } catch (e) {
-        console.error("寫入資料失敗: ", e);
-        alert("儲存失敗，請檢查網路或 Firebase 設定。");
+        console.error("寫入失敗: ", e);
+        alert("儲存失敗，請檢查網路連線。");
       } finally {
         btnWin.disabled = false; btnLoss.disabled = false;
       }
     }
 
-    // 讀取並計算統計資料
     async function loadStats() {
       try {
         const q = query(matchesCol, orderBy("timestamp", "desc"));
         const querySnapshot = await getDocs(q);
         
         const stats = {};
+        const allMatches = [];
         
-        querySnapshot.forEach((doc) => {
-          const data = doc.data();
+        querySnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
           const date = data.date;
           
           if (!stats[date]) {
             stats[date] = { wins: 0, losses: 0, total: 0 };
           }
-          
           stats[date].total += 1;
           if (data.result === 'win') stats[date].wins += 1;
           else if (data.result === 'loss') stats[date].losses += 1;
+
+          allMatches.push({
+            id: docSnap.id,
+            ...data
+          });
         });
 
+        window.currentMatches = allMatches; // 儲存到全域變數供編輯使用
         renderStats(stats);
+        renderMatchList(allMatches);
       } catch (e) {
-        console.error("讀取資料失敗: ", e);
-        document.getElementById('history-list').innerHTML = `<p class="text-red-400 text-sm text-center">讀取失敗，請確認資料庫權限是否開啟 (需設定 Firestore Rules)</p>`;
+        console.error("讀取失敗: ", e);
       }
     }
 
-    // 渲染畫面
     function renderStats(stats) {
       const today = getTodayString();
       const historyList = document.getElementById('history-list');
       historyList.innerHTML = '';
 
-      // 更新今日數據
       if (stats[today]) {
         const t = stats[today];
         document.getElementById('today-total').textContent = t.total;
         document.getElementById('today-wins').textContent = t.wins;
         document.getElementById('today-losses').textContent = t.losses;
-        const rate = t.total === 0 ? 0 : Math.round((t.wins / t.total) * 100);
-        document.getElementById('today-rate').textContent = rate + '%';
+        document.getElementById('today-rate').textContent = Math.round((t.wins / t.total) * 100) + '%';
       } else {
         document.getElementById('today-total').textContent = '0';
         document.getElementById('today-wins').textContent = '0';
@@ -193,39 +254,124 @@
         document.getElementById('today-rate').textContent = '0%';
       }
 
-      // 更新歷史數據
       const sortedDates = Object.keys(stats).sort((a, b) => b.localeCompare(a));
-      
       sortedDates.forEach(date => {
-        if (date === today) return; // 略過今天
+        if (date === today) return; 
         
         const d = stats[date];
-        const rate = d.total === 0 ? 0 : Math.round((d.wins / d.total) * 100);
+        const rate = Math.round((d.wins / d.total) * 100);
         
         const item = document.createElement('div');
         item.className = 'flex justify-between items-center bg-gray-700 p-3 rounded-lg';
         item.innerHTML = `
           <span class="text-gray-300 font-medium">${date}</span>
-          <div class="text-sm flex gap-4">
-            <span class="text-gray-400">總場: <span class="text-white">${d.total}</span></span>
+          <div class="text-sm flex gap-3">
+            <span class="text-gray-400">總: <span class="text-white">${d.total}</span></span>
             <span class="text-green-400">勝: <span class="text-white">${d.wins}</span></span>
             <span class="text-red-400">敗: <span class="text-white">${d.losses}</span></span>
-            <span class="text-blue-400 w-12 text-right">${rate}%</span>
+            <span class="text-blue-400 w-10 text-right">${rate}%</span>
           </div>
         `;
         historyList.appendChild(item);
       });
 
-      if (historyList.innerHTML === '') {
-        historyList.innerHTML = '<p class="text-gray-500 text-sm text-center">尚無歷史紀錄</p>';
-      }
+      if (historyList.innerHTML === '') historyList.innerHTML = '<p class="text-gray-500 text-sm text-center">尚無歷史紀錄</p>';
     }
 
-    // 綁定事件
+    function renderMatchList(matches) {
+      const matchList = document.getElementById('match-list');
+      matchList.innerHTML = '';
+
+      if (matches.length === 0) {
+        matchList.innerHTML = '<p class="text-gray-500 text-sm text-center">尚無對戰紀錄</p>';
+        return;
+      }
+
+      matches.forEach(match => {
+        const isWin = match.result === 'win';
+        const resultLabel = isWin ? '<span class="text-green-400 bg-green-900/30 px-2 py-0.5 rounded text-xs border border-green-800">勝</span>' 
+                                  : '<span class="text-red-400 bg-red-900/30 px-2 py-0.5 rounded text-xs border border-red-800">敗</span>';
+        
+        // 判斷是否有備註，有的話加上備註的 HTML
+        const memoHtml = match.memo ? `<div class="text-sm text-yellow-500 mt-2 bg-gray-800 p-2 rounded border border-gray-600">📝 ${match.memo}</div>` : '';
+
+        const item = document.createElement('div');
+        item.className = 'flex justify-between items-center bg-gray-700 p-3 rounded-lg hover:bg-gray-600 transition';
+        item.innerHTML = `
+          <div class="flex-1 mr-4">
+            <div class="text-xs text-gray-400 mb-1">${match.date} ${formatTime(match.timestamp)}</div>
+            <div class="text-sm">
+              <span class="font-bold text-white">${match.myChar}</span>
+              <span class="text-gray-400 mx-1">vs</span>
+              <span class="font-bold text-gray-300">${match.oppChar}</span>
+              <span class="ml-2">${resultLabel}</span>
+            </div>
+            ${memoHtml}
+          </div>
+          <div class="flex flex-col gap-2 text-sm">
+            <button onclick="openEditModal('${match.id}')" class="text-blue-400 hover:text-blue-300 p-1">編輯</button>
+            <button onclick="deleteMatch('${match.id}')" class="text-red-400 hover:text-red-300 p-1">刪除</button>
+          </div>
+        `;
+        matchList.appendChild(item);
+      });
+    }
+
+    window.deleteMatch = async (id) => {
+      if (confirm('確定要刪除這筆紀錄嗎？這將會影響統計數據。')) {
+        try {
+          await deleteDoc(doc(db, "sf6_matches", id));
+          await loadStats(); 
+        } catch (e) {
+          console.error("刪除失敗", e);
+          alert("刪除失敗");
+        }
+      }
+    };
+
+    window.openEditModal = (id) => {
+      // 從全域變數尋找這筆對戰資料
+      const match = window.currentMatches.find(m => m.id === id);
+      if (!match) return;
+
+      document.getElementById('edit-id').value = id;
+      document.getElementById('edit-my-char').value = match.myChar;
+      document.getElementById('edit-opp-char').value = match.oppChar;
+      document.getElementById('edit-result').value = match.result;
+      document.getElementById('edit-memo').value = match.memo || ''; // 載入舊備註，沒有則空白
+      
+      document.getElementById('edit-modal').classList.remove('hidden');
+    };
+
+    window.closeEditModal = () => {
+      document.getElementById('edit-modal').classList.add('hidden');
+    };
+
+    window.saveEdit = async () => {
+      const id = document.getElementById('edit-id').value;
+      const myChar = document.getElementById('edit-my-char').value;
+      const oppChar = document.getElementById('edit-opp-char').value;
+      const result = document.getElementById('edit-result').value;
+      const memo = document.getElementById('edit-memo').value.trim();
+
+      try {
+        await updateDoc(doc(db, "sf6_matches", id), {
+          myChar: myChar,
+          oppChar: oppChar,
+          result: result,
+          memo: memo // 更新備註
+        });
+        closeEditModal();
+        await loadStats(); 
+      } catch (e) {
+        console.error("更新失敗", e);
+        alert("更新失敗");
+      }
+    };
+
     document.getElementById('btn-win').addEventListener('click', () => recordMatch('win'));
     document.getElementById('btn-loss').addEventListener('click', () => recordMatch('loss'));
 
-    // 初始化執行
     initSelects();
     loadStats();
 
